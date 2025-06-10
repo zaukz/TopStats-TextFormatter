@@ -17,6 +17,8 @@
  * @author  nicholass003
  * @link    https://github.com/nicholass003/
  *
+ * number formatting added by zAukz
+ * Discord: zaukz
  *
  */
 
@@ -35,156 +37,165 @@ use pocketmine\entity\Human;
 use pocketmine\entity\Skin;
 use pocketmine\player\Player;
 use pocketmine\Server;
-use SOFe\InfoAPI\InfoAPI;
 use function count;
 use function floor;
-use function random_bytes;
-use function str_repeat;
-use function strlen;
+use function str_replace;
 use function uasort;
+use function is_numeric;
+
+class NumberFormatter {
+    /**
+     * Formats a number into a human-readable string (e.g. 1.2k, 5.6M, 8.9B)
+     */
+    public static function format(float $number): string {
+        if ($number >= 1000000000) {
+            return round($number / 1000000000, 1) . 'B';
+        } elseif ($number >= 1000000) {
+            return round($number / 1000000, 1) . 'M';
+        } elseif ($number >= 1000) {
+            return round($number / 1000, 1) . 'k';
+        }
+        if ((int)$number === $number) {
+            return (string)intval($number);
+        }
+        return (string)$number;
+    }
+}
 
 class Utils{
 
-	public static function getSortedArrayBoard(array $data, string $type) : array{
-		uasort($data, function($a, $b) use($type) {
-			return $b[$type] <=> $a[$type];
-		});
-		return $data;
-	}
+    public static function getSortedArrayBoard(array $data, string $type) : array{
+        uasort($data, function($a, $b) use($type) {
+            return $b[$type] <=> $a[$type];
+        });
+        return $data;
+    }
 
-	public static function getTopStatsText(array $data, IModel $model, string $text, string $textType, bool $forceSorting = false) : string{
-		$result = "";
-		$num = 1;
-		$max = TopStats::getInstance()->getMaxList();
-		if($textType === Leaderboard::TYPE_TITLE){
-			$max = 1;
-		}
-		if(!$forceSorting){
-			$data = self::getSortedArrayBoard($data, $model->getType());
-		}
-		foreach($data as $xuid => $userData){
-			if($model instanceof PlayerModel){
-				if($num === $model->getTop()){
-					$result = self::validateTextFormat($model->getType(), $userData, $text, $num);
-					break;
-				}
-			}else{
-				$result .= self::validateTextFormat($model->getType(), $userData, $text, $num);
-				if($num >= $max){
-					break;
-				}
-			}
-			++$num;
-		}
-		if(strlen($result) === 0 && $model instanceof PlayerModel){
-			$result .= match($textType){
-				Leaderboard::TYPE_TITLE => self::validateTextFormat($model->getType(), ["name" => "Unknown", $model->getType() => 0], $text, $num),
-				Leaderboard::TYPE_TEXT => InfoAPI::render(TopStats::getInstance(), TopStats::getInstance()->getConfig()->get("no-data-found-text", Leaderboard::NO_DATA_FOUND), [
-					"line" => "\n"
-				])
-			};
-		}
-		return $result;
-	}
+    public static function getTopStatsText(array $data, IModel $model, string $text, string $textType, bool $forceSorting = false) : string{
+        $result = "";
+        $num = 1;
+        $max = TopStats::getInstance()->getMaxList();
+        if($textType === Leaderboard::TYPE_TITLE){
+            $max = 1;
+        }
+        if(!$forceSorting){
+            $data = self::getSortedArrayBoard($data, $model->getType());
+        }
+        foreach($data as $xuid => $userData){
+            if($model instanceof PlayerModel){
+                if($num === $model->getTop()){
+                    $result = self::validateTextFormat($model->getType(), $userData, $text, $num);
+                    break;
+                }
+            }else{
+                $result .= self::validateTextFormat($model->getType(), $userData, $text, $num);
+                if($num >= $max){
+                    break;
+                }
+            }
+            ++$num;
+        }
+        return $result;
+    }
 
-	public static function getTopStatsPlayerSkin(array $data, string $type, int $top) : Skin{
-		$playerName = "";
-		$num = 1;
-		foreach(self::getSortedArrayBoard($data, $type) as $xuid => $userData){
-			if($num === $top){
-				$playerName = $userData["name"];
-				break;
-			}
-			++$num;
-		}
+    public static function getTopStatsPlayerSkin(array $data, string $type, int $top) : ?Skin{
+        $playerName = "";
+        $num = 1;
+        foreach(self::getSortedArrayBoard($data, $type) as $xuid => $userData){
+            if($num === $top){
+                $playerName = $userData["name"];
+                break;
+            }
+            ++$num;
+        }
 
-		$player = TopStats::getInstance()->getServer()->getPlayerExact($playerName);
-		if($player !== null){
-			return Human::parseSkinNBT($player->getSaveData());
-		}else{
-			$playerData = TopStats::getInstance()->getServer()->getOfflinePlayerData($playerName);
-			$standard = new Skin("Standard_Custom", str_repeat(random_bytes(3) . "\xff", 4096)); //If player data is not found, use a default solid color skin
-			return $playerData !== null ? Human::parseSkinNBT($playerData) : $standard;
-		}
-	}
+        $player = TopStats::getInstance()->getServer()->getPlayerByPrefix($playerName);
+        if($player !== null){
+            return Human::parseSkinNBT($player->getSaveData());
+        }else{
+            $playerData = TopStats::getInstance()->getServer()->getOfflinePlayerData($playerName);
+            return $playerData !== null ? Human::parseSkinNBT($playerData) : null;
+        }
+    }
 
-	public static function getNextTopStatsIds() : int{
-		return count(TopStats::getInstance()->getLeaderboardManager()->leaderboards());
-	}
+    public static function getNextTopStatsIds() : int{
+        return count(TopStats::getInstance()->getLeaderboardManager()->leaderboards());
+    }
 
-	public static function validatePlayerModels(Leaderboard $leaderboard) : void{
-		foreach(Server::getInstance()->getWorldManager()->getWorlds() as $world){
-			$garbageModels = [];
-			$model = $leaderboard->getModel();
-			foreach($world->getEntities() as $entity){
-				if(($entity instanceof PlayerModel || $entity instanceof TextModel) &&
-				$entity->getModelId() === $leaderboard->getId() &&
-				$entity->getPosition()->equals($model->getPosition())){
-					$garbageModels[] = $entity;
-				}
-			}
-			if(count($garbageModels) > 1){
-				$num = 1;
-				foreach($garbageModels as $garbageModel){
-					if($num === count($garbageModels)){
-						$leaderboard->setModel($garbageModel);
-						break;
-					}
-					$garbageModel->flagForDespawn();
-					++$num;
-				}
-			}
-		}
-	}
+    public static function validatePlayerModels(Leaderboard $leaderboard) : void{
+        foreach(Server::getInstance()->getWorldManager()->getWorlds() as $world){
+            $garbageModels = [];
+            $model = $leaderboard->getModel();
+            foreach($world->getEntities() as $entity){
+                if(($entity instanceof PlayerModel || $entity instanceof TextModel) &&
+                $entity->getModelId() === $leaderboard->getId() &&
+                $entity->getPosition()->equals($model->getPosition())){
+                    $garbageModels[] = $entity;
+                }
+            }
+            if(count($garbageModels) > 1){
+                $num = 1;
+                foreach($garbageModels as $garbageModel){
+                    if($num === count($garbageModels)){
+                        $leaderboard->setModel($garbageModel);
+                        break;
+                    }
+                    $garbageModel->flagForDespawn();
+                    ++$num;
+                }
+            }
+        }
+    }
 
-	public static function validateTextFormat(string $type, array $data, string $text, int $rank) : string{
-		$formattedData = $data[$type];
-		if($type === DataType::ONLINE_TIME){
-			$formattedData = self::timeFormat($data[$type]);
-		}
-		return InfoAPI::render(TopStats::getInstance(), $text, [
-			"player" => $data["name"],
-			$type => $formattedData,
-			"rank_" . $type => $rank,
-			"line" => "\n"
-		]);
-	}
+    /**
+     * Formats leaderboard values for display.
+     * Numeric values (except ONLINE_TIME) are passed through NumberFormatter::format().
+     */
+    public static function validateTextFormat(string $type, array $data, string $text, int $rank) : string{
+        $formattedData = $data[$type];
+        if($type === DataType::ONLINE_TIME){
+            $formattedData = self::timeFormat($data[$type]);
+        } elseif (is_numeric($formattedData)) {
+            $formattedData = NumberFormatter::format((float)$formattedData);
+        }
+        return str_replace(
+            ["{player}", "{" . $type . "}", "{rank_" . $type . "}", "{line}"],
+            [$data["name"], $formattedData, $rank, "\n"],
+            $text
+        );
+    }
 
-	public static function timeFormat(int $time) : string{
-		$years = floor($time / (365 * 24 * 60 * 60));
-		$months = floor(($time - ($years * 365 * 24 * 60 * 60)) / (30 * 24 * 60 * 60));
-		$weeks = floor(($time - ($years * 365 * 24 * 60 * 60) - ($months * 30 * 24 * 60 * 60)) / (7 * 24 * 60 * 60));
-		$days = floor(($time - ($years * 365 * 24 * 60 * 60) - ($months * 30 * 24 * 60 * 60) - ($weeks * 7 * 24 * 60 * 60)) / (24 * 60 * 60));
-		$hours = floor(($time - ($years * 365 * 24 * 60 * 60) - ($months * 30 * 24 * 60 * 60) - ($weeks * 7 * 24 * 60 * 60) - ($days * 24 * 60 * 60)) / (60 * 60));
-		$minutes = floor(($time - ($years * 365 * 24 * 60 * 60) - ($months * 30 * 24 * 60 * 60) - ($weeks * 7 * 24 * 60 * 60) - ($days * 24 * 60 * 60) - ($hours * 60 * 60)) / 60);
-		$seconds = $time % 60;
+    public static function timeFormat(int $time) : string{
+        $years = floor($time / (365 * 24 * 60 * 60));
+        $months = floor(($time - ($years * 365 * 24 * 60 * 60)) / (30 * 24 * 60 * 60));
+        $weeks = floor(($time - ($years * 365 * 24 * 60 * 60) - ($months * 30 * 24 * 60 * 60)) / (7 * 24 * 60 * 60));
+        $days = floor(($time - ($years * 365 * 24 * 60 * 60) - ($months * 30 * 24 * 60 * 60) - ($weeks * 7 * 24 * 60 * 60)) / (24 * 60 * 60));
+        $hours = floor(($time - ($years * 365 * 24 * 60 * 60) - ($months * 30 * 24 * 60 * 60) - ($weeks * 7 * 24 * 60 * 60) - ($days * 24 * 60 * 60)) / (60 * 60));
+        $minutes = floor(($time - ($years * 365 * 24 * 60 * 60) - ($months * 30 * 24 * 60 * 60) - ($weeks * 7 * 24 * 60 * 60) - ($days * 24 * 60 * 60) - ($hours * 60 * 60)) / 60);
+        $seconds = $time % 60;
 
-		$format = TopStats::getInstance()->getTimeFormat();
-		return InfoAPI::render(TopStats::getInstance(), $format, [
-			"year" => $years,
-			"month" => $months,
-			"week" => $weeks,
-			"day" => $days,
-			"hour" => $hours,
-			"minute" => $minutes,
-			"second" => $seconds
-		]);
-	}
+        $format = TopStats::getInstance()->getTimeFormat();
+        return str_replace(
+            ["{year}", "{month}", "{week}", "{day}", "{hour}", "{minute}", "{second}"],
+            [$years, $months, $weeks, $days, $hours, $minutes, $seconds],
+            $format
+        );
+    }
 
-	public static function moneyTransaction(Player $player, float|int $money) : bool{
-		$moneyAmount = TopStats::getInstance()->getDatabase()->getTemporaryDataValue($player, DataType::MONEY);
-		if($moneyAmount !== false && self::validateDataAction($moneyAmount, $money) !== DataAction::NONE){
-			return true;
-		}
-		return false;
-	}
+    public static function moneyTransaction(Player $player, float|int $money) : bool{
+        $moneyAmount = TopStats::getInstance()->getDatabase()->getTemporaryDataValue($player, DataType::MONEY);
+        if($moneyAmount !== false && self::validateDataAction($moneyAmount, $money) !== DataAction::NONE){
+            return true;
+        }
+        return false;
+    }
 
-	public static function validateDataAction(float|int $before, float|int $after) : int{
-		if($before < $after){
-			return DataAction::ADDITION;
-		}elseif($before > $after){
-			return DataAction::SUBTRACTION;
-		}
-		return DataAction::NONE;
-	}
+    public static function validateDataAction(float|int $before, float|int $after) : int{
+        if($before < $after){
+            return DataAction::ADDITION;
+        }elseif($before > $after){
+            return DataAction::SUBTRACTION;
+        }
+        return DataAction::NONE;
+    }
 }
